@@ -1,4 +1,6 @@
 .vscode
 *.o
 mini_serv
+miniserv
+example
 client
