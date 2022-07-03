@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/06/30 11:56:51 by abaur            ###   ########.fr       */
+/*   Updated: 2022/07/03 19:15:44 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -19,6 +19,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 
 
 int g_sockfd = -1;
@@ -52,6 +53,33 @@ static bool	SockInit(int port){
 
 }
 
+static void NewClient(){
+	int fd = accept(g_sockfd, NULL, NULL);
+	if (fd < 0)
+		throw(errno, "Accept error");
+	else
+		printf("New client on fd %i\n", fd);
+}
+
+static noreturn void	SelectLoop() {
+	fd_set	fd_read;
+
+	while (true) 
+	{
+		FD_ZERO(&fd_read);
+		FD_SET(g_sockfd, &fd_read);
+
+		int r = select(FD_SETSIZE, &fd_read, NULL, NULL, NULL);
+		if (r < 0)
+			throw (errno, "Select error");
+		else if (r == 0)
+			continue;
+
+		if (FD_ISSET(g_sockfd, &fd_read))
+			NewClient();
+	}
+}
+
 extern int	main(int argc, char** argv) {
 	if (argc != 2) {
 		write(STDERR_FILENO, "Wrong number of arguments !\n", 28);
@@ -59,9 +87,8 @@ extern int	main(int argc, char** argv) {
 	}
 
 	if (!SockInit(atoi(argv[1])))
-		throw(errno, "Unable to bind create or bind socket.");
+		throw(errno, "Unable to create or bind socket.");
+	printf("Server open on port %i\n", g_sockfd);
 
-	//...
-
-	clean_exit(0);
+	SelectLoop();
 }
