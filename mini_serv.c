@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/07/04 19:55:33 by abaur            ###   ########.fr       */
+/*   Updated: 2022/07/04 21:39:21 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -20,6 +20,8 @@
 #include <unistd.h>
 #include <netinet/in.h>
 #include <sys/select.h>
+
+#define BUFFLEN	8
 
 struct s_client {
 	int	fd;
@@ -51,7 +53,7 @@ static noreturn void	clean_exit(int status){
 		close(g_sockfd);
 	exit(status);
 }
-static noreturn void	throw(int errnum, char* message){
+static noreturn void	throw(int errnum, const char* message){
 	write(STDERR_FILENO, "Fatal error\n", 12);
 	if (message) dprintf(STDERR_FILENO, "%s\n", message);
 	if (errnum)  dprintf(STDERR_FILENO, "%d %s\n", errnum, strerror(errnum));
@@ -63,7 +65,7 @@ static noreturn void	throw(int errnum, char* message){
  * Variables containing the buffer's pointer and it's length are 
  * modified in-place.
  */
-static void	buffcat(char** buff, size_t* bufflen, char* cat, size_t catlen){
+static void	buffcat(char** buff, size_t* bufflen, const char* cat, size_t catlen){
 	*buff = realloc(*buff, *bufflen + catlen);
 	if (!*buff)
 		throw(errno, "Realloc error");
@@ -71,6 +73,12 @@ static void	buffcat(char** buff, size_t* bufflen, char* cat, size_t catlen){
 	*bufflen += catlen;
 }
 
+static size_t	strnchr(const char* str, size_t n, char c){
+	for (size_t i=0; i<n; i++)
+		if (str[i] == c)
+			return i;
+	return -1;
+}
 
 /******************************************************************************/
 /* # Clients Methods                                                          */
@@ -102,16 +110,21 @@ static void DeleteClient(t_client* cl){
 }
 
 static void	ReadClient(t_client* cl){
-	char buff[2049] = { 0 };
+	char buff[BUFFLEN] = { 0 };
 
-	size_t rcount = recv(cl->fd, buff, 2048, MSG_DONTWAIT);
+	size_t rcount = recv(cl->fd, buff, BUFFLEN, MSG_DONTWAIT);
 	if (rcount < 0)
 		throw(errno, "Recv error");
 	else if (rcount == 0)
 		DeleteClient(cl);
 	else {
 		buffcat(&cl->inqueue, &cl->inlen, buff, rcount);
-		printf("Client %i buffer: \"%*s\"\n", cl->uid, cl->inlen, cl->inqueue);
+		size_t	msglen;
+		while ((msglen = 1+strnchr(cl->inqueue, cl->inlen, '\n'))){
+			printf("Client %i: %.*s", cl->uid, msglen, cl->inqueue);
+			cl->inlen -= msglen;
+			memmove(cl->inqueue, cl->inqueue+msglen, cl->inlen);
+		}
 	}
 }
 
