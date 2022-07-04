@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/07/04 18:11:40 by abaur            ###   ########.fr       */
+/*   Updated: 2022/07/04 19:55:33 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -22,17 +22,19 @@
 #include <sys/select.h>
 
 struct s_client {
-	int fd;
-	int uid;
+	int	fd;
+	int	uid;
+	size_t	inlen;
+	char*	inqueue;
 };
 typedef struct s_client	t_client;
 
-int g_sockfd = -1;
+int	g_sockfd = -1;
 /**
  * The total amount of client that ever connected. NOT the amount of currently 
  * active clients.
  */
-int g_clientcount = 0;
+int	g_clientcount = 0;
 /**
  * A map that takes a client's fd as key.
  */
@@ -56,6 +58,19 @@ static noreturn void	throw(int errnum, char* message){
 	clean_exit(1);
 }
 
+/**
+ * Concatenates two buffers.
+ * Variables containing the buffer's pointer and it's length are 
+ * modified in-place.
+ */
+static void	buffcat(char** buff, size_t* bufflen, char* cat, size_t catlen){
+	*buff = realloc(*buff, *bufflen + catlen);
+	if (!*buff)
+		throw(errno, "Realloc error");
+	memcpy(*buff + *bufflen, cat, catlen);
+	*bufflen += catlen;
+}
+
 
 /******************************************************************************/
 /* # Clients Methods                                                          */
@@ -72,6 +87,8 @@ static void	NewClient(){
 	g_clients[fd] = cl;
 	cl->uid = g_clientcount++;
 	cl->fd  = fd;
+	cl->inlen = 0;
+	cl->inqueue = malloc(1);
 
 	printf("New client %i on fd %i\n", cl->uid, fd);
 }
@@ -80,6 +97,7 @@ static void DeleteClient(t_client* cl){
 	close(cl->fd);
 	g_clients[cl->fd] = NULL;
 	printf("Client %i disconnected\n", cl->uid);
+	free(cl->inqueue);
 	free(cl);
 }
 
@@ -92,7 +110,8 @@ static void	ReadClient(t_client* cl){
 	else if (rcount == 0)
 		DeleteClient(cl);
 	else {
-		//...
+		buffcat(&cl->inqueue, &cl->inlen, buff, rcount);
+		printf("Client %i buffer: \"%*s\"\n", cl->uid, cl->inlen, cl->inqueue);
 	}
 }
 
