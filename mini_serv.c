@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/07/04 21:39:21 by abaur            ###   ########.fr       */
+/*   Updated: 2022/07/07 16:03:49 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -28,6 +28,8 @@ struct s_client {
 	int	uid;
 	size_t	inlen;
 	char*	inqueue;
+	size_t	outlen;
+	char*	outqueue;
 };
 typedef struct s_client	t_client;
 
@@ -48,9 +50,13 @@ t_client*	g_clients[FD_SETSIZE] = { NULL };
 /* # Utility                                                                  */
 /******************************************************************************/
 
+static void	DeleteClient(t_client*);
 static noreturn void	clean_exit(int status){
 	if (g_sockfd != -1)
 		close(g_sockfd);
+	for (int fd=0; fd<FD_SETSIZE; fd++)
+	if (g_clients[fd]) 
+		DeleteClient(g_clients[fd]);
 	exit(status);
 }
 static noreturn void	throw(int errnum, const char* message){
@@ -62,8 +68,8 @@ static noreturn void	throw(int errnum, const char* message){
 
 /**
  * Concatenates two buffers.
- * Variables containing the buffer's pointer and it's length are 
- * modified in-place.
+ * The destination buffer is reallocated, and the variables containing its
+ * pointer and length are modified in-place.
  */
 static void	buffcat(char** buff, size_t* bufflen, const char* cat, size_t catlen){
 	*buff = realloc(*buff, *bufflen + catlen);
@@ -84,7 +90,7 @@ static size_t	strnchr(const char* str, size_t n, char c){
 /* # Clients Methods                                                          */
 /******************************************************************************/
 
-static void	NewClient(){
+static t_client*	NewClient(){
 	int fd = accept(g_sockfd, NULL, NULL);
 	if (fd < 0)
 		throw(errno, "Accept error");
@@ -95,18 +101,31 @@ static void	NewClient(){
 	g_clients[fd] = cl;
 	cl->uid = g_clientcount++;
 	cl->fd  = fd;
-	cl->inlen = 0;
-	cl->inqueue = malloc(1);
-
-	printf("New client %i on fd %i\n", cl->uid, fd);
+	cl->inlen  = 0;
+	cl->outlen = 0;
+	cl->inqueue  = malloc(1);
+	cl->outqueue = malloc(1);
+	return cl;
 }
 
 static void DeleteClient(t_client* cl){
 	close(cl->fd);
 	g_clients[cl->fd] = NULL;
-	printf("Client %i disconnected\n", cl->uid);
 	free(cl->inqueue);
+	free(cl->outqueue);
 	free(cl);
+}
+
+/**
+ * @param format	Must contain a %i flag, and an optional %.*s flag.
+ * @param msg	Should not include the terminating \\n.
+ */
+static void	Broadcast(const char* format, int clientuid, int msglen, const char* msg){
+	char	sbuff[1 + snprintf(NULL, 0, format, clientuid, msglen, msg)];
+
+	snprintf(sbuff, sizeof(sbuff), format, clientuid, msglen, msg);
+	printf("%.*s", (int)sizeof(sbuff), sbuff);
+	//...
 }
 
 static void	ReadClient(t_client* cl){
@@ -115,13 +134,15 @@ static void	ReadClient(t_client* cl){
 	size_t rcount = recv(cl->fd, buff, BUFFLEN, MSG_DONTWAIT);
 	if (rcount < 0)
 		throw(errno, "Recv error");
-	else if (rcount == 0)
+	else if (rcount == 0){
+		Broadcast("server: client %i just left\n", cl->uid, 0, NULL);
 		DeleteClient(cl);
+	}
 	else {
 		buffcat(&cl->inqueue, &cl->inlen, buff, rcount);
 		size_t	msglen;
 		while ((msglen = 1+strnchr(cl->inqueue, cl->inlen, '\n'))){
-			printf("Client %i: %.*s", cl->uid, msglen, cl->inqueue);
+			Broadcast("client %i: %.*s\n", cl->uid, msglen-1, cl->inqueue);
 			cl->inlen -= msglen;
 			memmove(cl->inqueue, cl->inqueue+msglen, cl->inlen);
 		}
@@ -173,8 +194,10 @@ static noreturn void	SelectLoop() {
 		else if (r == 0)
 			continue;
 
-		if (FD_ISSET(g_sockfd, &fd_read))
-			NewClient();
+		if (FD_ISSET(g_sockfd, &fd_read)){
+			int uid = NewClient()->uid;
+			Broadcast("server: client %i just arrived\n", uid, 0, NULL);
+		}
 		for (int fd=0; fd<FD_SETSIZE; fd++)
 		if (g_clients[fd]) {
 			if (FD_ISSET(fd, &fd_read))
