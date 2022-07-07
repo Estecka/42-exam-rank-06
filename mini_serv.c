@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/07/07 16:03:49 by abaur            ###   ########.fr       */
+/*   Updated: 2022/07/07 20:09:55 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -120,12 +120,14 @@ static void DeleteClient(t_client* cl){
  * @param format	Must contain a %i flag, and an optional %.*s flag.
  * @param msg	Should not include the terminating \\n.
  */
-static void	Broadcast(const char* format, int clientuid, int msglen, const char* msg){
-	char	sbuff[1 + snprintf(NULL, 0, format, clientuid, msglen, msg)];
+static void	Broadcast(const char* format, int senderuid, int msglen, const char* msg){
+	char	sbuff[1 + snprintf(NULL, 0, format, senderuid, msglen, msg)];
 
-	snprintf(sbuff, sizeof(sbuff), format, clientuid, msglen, msg);
-	printf("%.*s", (int)sizeof(sbuff), sbuff);
-	//...
+	snprintf(sbuff, sizeof(sbuff), format, senderuid, msglen, msg);
+	printf("%s", sbuff);
+	for (int fd=0; fd<FD_SETSIZE; fd++)
+	if (g_clients[fd] && senderuid != g_clients[fd]->uid)
+		buffcat(&g_clients[fd]->outqueue, &g_clients[fd]->outlen, sbuff, sizeof(sbuff)-1);
 }
 
 static void	ReadClient(t_client* cl){
@@ -146,6 +148,16 @@ static void	ReadClient(t_client* cl){
 			cl->inlen -= msglen;
 			memmove(cl->inqueue, cl->inqueue+msglen, cl->inlen);
 		}
+	}
+}
+
+static void	WriteClient(t_client* cl){
+	size_t wcount = send(cl->fd, cl->outqueue, cl->outlen, MSG_DONTWAIT);
+	if (wcount < 0 && (errno != EAGAIN))
+		throw(errno, "Send error");
+	else if (wcount != 0){
+		cl->outlen -= wcount;
+		memmove(cl->outqueue, cl->outqueue+wcount, cl->outlen);
 	}
 }
 
@@ -170,25 +182,29 @@ static bool	SockInit(int port){
 
 }
 
-static void	Fd_Init(fd_set* fd_read){
+static void	Fd_Init(fd_set* fd_read, fd_set* fd_write){
 	FD_ZERO(fd_read);
+	FD_ZERO(fd_write);
 
 	FD_SET(g_sockfd, fd_read);
 
 	for (int fd=0; fd<FD_SETSIZE; fd++) 
 	if (g_clients[fd]) {
 		FD_SET(fd, fd_read);
+		if (g_clients[fd]->outlen)
+			FD_SET(fd, fd_write);
 	}
 }
 
 static noreturn void	SelectLoop() {
 	fd_set	fd_read;
+	fd_set	fd_write;
 
 	while (true) 
 	{
-		Fd_Init(&fd_read);
+		Fd_Init(&fd_read, &fd_write);
 
-		int r = select(FD_SETSIZE, &fd_read, NULL, NULL, NULL);
+		int r = select(FD_SETSIZE, &fd_read, &fd_write, NULL, NULL);
 		if (r < 0)
 			throw (errno, "Select error");
 		else if (r == 0)
@@ -200,6 +216,8 @@ static noreturn void	SelectLoop() {
 		}
 		for (int fd=0; fd<FD_SETSIZE; fd++)
 		if (g_clients[fd]) {
+			if (FD_ISSET(fd, &fd_write))
+				WriteClient(g_clients[fd]);
 			if (FD_ISSET(fd, &fd_read))
 				ReadClient(g_clients[fd]);
 		}
