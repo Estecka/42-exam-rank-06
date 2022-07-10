@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/07/07 20:09:55 by abaur            ###   ########.fr       */
+/*   Updated: 2022/07/10 15:22:57 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -61,7 +61,7 @@ static noreturn void	clean_exit(int status){
 }
 static noreturn void	throw(int errnum, const char* message){
 	write(STDERR_FILENO, "Fatal error\n", 12);
-	if (message) dprintf(STDERR_FILENO, "%s\n", message);
+	if (message) write(STDERR_FILENO, message, strlen(message));
 	if (errnum)  dprintf(STDERR_FILENO, "%d %s\n", errnum, strerror(errnum));
 	clean_exit(1);
 }
@@ -75,7 +75,8 @@ static void	buffcat(char** buff, size_t* bufflen, const char* cat, size_t catlen
 	*buff = realloc(*buff, *bufflen + catlen);
 	if (!*buff)
 		throw(errno, "Realloc error");
-	memcpy(*buff + *bufflen, cat, catlen);
+	for (size_t i=0; i<catlen; i++)
+		(*buff)[i + *bufflen] = cat[i];
 	*bufflen += catlen;
 }
 
@@ -121,13 +122,17 @@ static void DeleteClient(t_client* cl){
  * @param msg	Should not include the terminating \\n.
  */
 static void	Broadcast(const char* format, int senderuid, int msglen, const char* msg){
-	char	sbuff[1 + snprintf(NULL, 0, format, senderuid, msglen, msg)];
+	char	sbuff[strlen(format) + msglen + 16];
 
-	snprintf(sbuff, sizeof(sbuff), format, senderuid, msglen, msg);
-	printf("%s", sbuff);
+	int	bufflen = sprintf(sbuff, format, senderuid, msglen, msg);
+	write(STDOUT_FILENO, sbuff, bufflen);
+	if (bufflen < 0)
+		throw(errno, "Sprintf error");
+	if (sizeof(sbuff) <= (size_t)bufflen)
+		throw(1, "sprintf output somehow exceeded the buffer.");
 	for (int fd=0; fd<FD_SETSIZE; fd++)
 	if (g_clients[fd] && senderuid != g_clients[fd]->uid)
-		buffcat(&g_clients[fd]->outqueue, &g_clients[fd]->outlen, sbuff, sizeof(sbuff)-1);
+		buffcat(&g_clients[fd]->outqueue, &g_clients[fd]->outlen, sbuff, bufflen);
 }
 
 static void	ReadClient(t_client* cl){
@@ -145,8 +150,9 @@ static void	ReadClient(t_client* cl){
 		size_t	msglen;
 		while ((msglen = 1+strnchr(cl->inqueue, cl->inlen, '\n'))){
 			Broadcast("client %i: %.*s\n", cl->uid, msglen-1, cl->inqueue);
+			for (size_t i=rcount; i<cl->inlen; i++)
+				cl->inqueue[i-rcount] = cl->inqueue[i];
 			cl->inlen -= msglen;
-			memmove(cl->inqueue, cl->inqueue+msglen, cl->inlen);
 		}
 	}
 }
@@ -156,8 +162,9 @@ static void	WriteClient(t_client* cl){
 	if (wcount < 0 && (errno != EAGAIN))
 		throw(errno, "Send error");
 	else if (wcount != 0){
+		for (size_t i=wcount; i<cl->outlen; i++)
+			cl->outqueue[i-wcount] = cl->outqueue[i];
 		cl->outlen -= wcount;
-		memmove(cl->outqueue, cl->outqueue+wcount, cl->outlen);
 	}
 }
 
@@ -232,7 +239,7 @@ extern int	main(int argc, char** argv) {
 
 	if (!SockInit(atoi(argv[1])))
 		throw(errno, "Unable to create or bind socket.");
-	printf("Server open on port %i\n", g_sockfd);
+	printf("Server open on port %s\n", argv[1]);
 
 	SelectLoop();
 }
