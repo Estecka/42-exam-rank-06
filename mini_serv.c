@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/07/14 16:52:58 by abaur            ###   ########.fr       */
+/*   Updated: 2022/07/15 00:28:36 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -26,7 +26,7 @@
 struct s_client {
 	int	fd;
 	int	uid;
-	char*	inqueue;
+	bool	newline;
 	char*	outqueue;
 };
 typedef struct s_client	t_client;
@@ -80,11 +80,13 @@ static void	strshift(char* str, size_t shift){
 		str[i-shift] = str[i];
 }
 
-static ssize_t	strichr(const char* str, char c){
-	for (size_t i=0; str[i]; i++)
-		if (str[i] == c)
+/**
+ * Returns the index of either the first ocurrence of c, or the null terminator.
+ */
+static size_t	strichr(const char* str, char c){
+	for (size_t i=0; true; i++)
+		if (str[i] == c || !str[i])
 			return i;
-	return -1;
 }
 
 /******************************************************************************/
@@ -100,9 +102,8 @@ static t_client*	NewClient(){
 	g_clients[fd] = cl;
 	cl->uid = g_clientcount++;
 	cl->fd  = fd;
-	cl->inqueue  = malloc(128) ?: throw(errno, "Inqueue malloc error");
+	cl->newline = true;
 	cl->outqueue = malloc(128) ?: throw(errno, "Outqueue malloc error");
-	cl->inqueue[0]  = '\0';
 	cl->outqueue[0] = '\0';
 	return cl;
 }
@@ -110,50 +111,55 @@ static t_client*	NewClient(){
 static void DeleteClient(t_client* cl){
 	close(cl->fd);
 	g_clients[cl->fd] = NULL;
-	if (cl->inqueue)
-		free(cl->inqueue);
 	if (cl->outqueue)
 		free(cl->outqueue);
 	free(cl);
 }
 
+static void	BroadcastRaw(const char* str, int senderuid){
+	write(STDOUT_FILENO, str, strlen(str));
+	for (int fd=0; fd<FD_SETSIZE; fd++)
+	if (g_clients[fd] && senderuid != g_clients[fd]->uid)
+		strpush(&g_clients[fd]->outqueue, str);
+}
 /**
- * @param format	Must contain a %i flag, and an optional %.*s flag.
- * @param msg	Should not include the terminating \\n.
+ * @param format	May contain an optional %i flag.
  */
-static void	Broadcast(const char* format, int senderuid, int msglen, const char* msg){
-	char	sbuff[strlen(format) + msglen + 16];
+static void	BroadcastFormat(const char* format, int senderuid){
+	char	sbuff[strlen(format) + 16];
 
-	int	bufflen = sprintf(sbuff, format, senderuid, msglen, msg);
-	write(STDOUT_FILENO, sbuff, bufflen);
+	int	bufflen = sprintf(sbuff, format, senderuid);
 	if (bufflen < 0)
 		throw(errno, "Sprintf error");
 	if (sizeof(sbuff) <= (size_t)bufflen)
 		throw(1, "sprintf output somehow exceeded the buffer.");
-	for (int fd=0; fd<FD_SETSIZE; fd++)
-	if (g_clients[fd] && senderuid != g_clients[fd]->uid)
-		strpush(&g_clients[fd]->outqueue, sbuff);
+	BroadcastRaw(sbuff, senderuid);
 }
 
 static void	ReadClient(t_client* cl){
-	char buff[BUFFLEN+1] = { '\0' };
+	char buff[BUFFLEN+2] = { '\0' };
 
 	ssize_t rcount = recv(cl->fd, buff, BUFFLEN, MSG_DONTWAIT);
 	if (rcount < 0)
 		throw(errno, "Recv error");
 	else if (rcount == 0){
-		if (cl->inqueue[0])
-			Broadcast("client %i: %.*s", cl->uid, strlen(cl->inqueue), cl->inqueue);
-		Broadcast("server: client %i just left\n", cl->uid, 0, NULL);
+		BroadcastFormat("server: client %i just left\n", cl->uid);
 		DeleteClient(cl);
 	}
-	else {
-		strpush(&cl->inqueue, buff);
-		size_t	msglen;
-		while ((msglen = 1+strichr(cl->inqueue, '\n'))){
-			Broadcast("client %i: %.*s\n", cl->uid, msglen-1, cl->inqueue);
-			strshift(cl->inqueue, msglen);
+	else for (char* msg=buff; msg[0]; ){
+		if (cl->newline){
+			cl->newline = false;
+			BroadcastFormat("client %i : ", cl->uid);
 		}
+		ssize_t msglen = strichr(msg, '\n');
+		if (msg[msglen] == '\n'){
+			msg[msglen] = '\0';
+			cl->newline = true;
+		}
+		BroadcastRaw(msg, cl->uid);
+		if (cl->newline)
+			BroadcastRaw("\n", cl->uid);
+		msg += msglen + 1;
 	}
 }
 
@@ -216,7 +222,7 @@ static noreturn void	SelectLoop() {
 
 		if (FD_ISSET(g_sockfd, &fd_read)){
 			int uid = NewClient()->uid;
-			Broadcast("server: client %i just arrived\n", uid, 0, NULL);
+			BroadcastFormat("server: client %i just arrived\n", uid);
 		}
 		for (int fd=0; fd<FD_SETSIZE; fd++)
 		if (g_clients[fd]) {
