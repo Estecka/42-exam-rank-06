@@ -7,16 +7,14 @@ OBJS = ${SRCS:.c=.o}
 
 NAME = miniserv
 
-CC = clang
 CFLAGS = -g -Wall -Wextra #-Werror
 
 
 all: client example ${NAME} 
 
-${NAME}: ${OBJS}
-	${CC} ${OBJS} -o ${NAME} ${CFGLAGS}
-
-${OBJS}: ${HDRS}
+${NAME}: ${SRCS} ${HDRS}
+	gcc   ${SRCS} -o ${NAME} ${CFGLAGS}
+	clang ${SRCS} -o ${NAME} ${CFGLAGS}
 
 client: client.c
 	gcc ${CFLAGS} client.c -o client
