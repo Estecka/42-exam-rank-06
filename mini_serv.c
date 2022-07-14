@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/07/14 16:49:52 by abaur            ###   ########.fr       */
+/*   Updated: 2022/07/14 16:52:58 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -142,6 +142,8 @@ static void	ReadClient(t_client* cl){
 	if (rcount < 0)
 		throw(errno, "Recv error");
 	else if (rcount == 0){
+		if (cl->inqueue[0])
+			Broadcast("client %i: %.*s", cl->uid, strlen(cl->inqueue), cl->inqueue);
 		Broadcast("server: client %i just left\n", cl->uid, 0, NULL);
 		DeleteClient(cl);
 	}
