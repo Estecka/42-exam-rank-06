@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/07/10 15:22:57 by abaur            ###   ########.fr       */
+/*   Updated: 2022/07/14 16:49:52 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -26,9 +26,7 @@
 struct s_client {
 	int	fd;
 	int	uid;
-	size_t	inlen;
 	char*	inqueue;
-	size_t	outlen;
 	char*	outqueue;
 };
 typedef struct s_client	t_client;
@@ -51,6 +49,7 @@ t_client*	g_clients[FD_SETSIZE] = { NULL };
 /******************************************************************************/
 
 static void	DeleteClient(t_client*);
+
 static noreturn void	clean_exit(int status){
 	if (g_sockfd != -1)
 		close(g_sockfd);
@@ -59,7 +58,7 @@ static noreturn void	clean_exit(int status){
 		DeleteClient(g_clients[fd]);
 	exit(status);
 }
-static noreturn void	throw(int errnum, const char* message){
+static noreturn void*	throw(int errnum, const char* message){
 	write(STDERR_FILENO, "Fatal error\n", 12);
 	if (message) write(STDERR_FILENO, message, strlen(message));
 	if (errnum)  dprintf(STDERR_FILENO, "%d %s\n", errnum, strerror(errnum));
@@ -67,21 +66,22 @@ static noreturn void	throw(int errnum, const char* message){
 }
 
 /**
- * Concatenates two buffers.
- * The destination buffer is reallocated, and the variables containing its
- * pointer and length are modified in-place.
+ * Concatenates two strings. The destination string is reallocated as needed.
  */
-static void	buffcat(char** buff, size_t* bufflen, const char* cat, size_t catlen){
-	*buff = realloc(*buff, *bufflen + catlen);
-	if (!*buff)
-		throw(errno, "Realloc error");
-	for (size_t i=0; i<catlen; i++)
-		(*buff)[i + *bufflen] = cat[i];
-	*bufflen += catlen;
+static void	strpush(char** str, const char* push){
+	size_t	slen = strlen(*str);
+	size_t	plen = strlen(push);
+	*str = realloc(*str, slen+plen+1) ?: throw(errno, "Realloc error");
+	strcat(*str, push);
+}
+static void	strshift(char* str, size_t shift){
+	size_t	slen = strlen(str);
+	for (size_t i=shift; i<=slen; i++)
+		str[i-shift] = str[i];
 }
 
-static size_t	strnchr(const char* str, size_t n, char c){
-	for (size_t i=0; i<n; i++)
+static ssize_t	strichr(const char* str, char c){
+	for (size_t i=0; str[i]; i++)
 		if (str[i] == c)
 			return i;
 	return -1;
@@ -96,24 +96,24 @@ static t_client*	NewClient(){
 	if (fd < 0)
 		throw(errno, "Accept error");
 
-	t_client* cl = malloc(sizeof(t_client));
-	if (!cl)
-		throw(errno, "Client Malloc error");
+	t_client* cl = malloc(sizeof(t_client)) ?: (close(fd), throw(errno, "Client Malloc error"));
 	g_clients[fd] = cl;
 	cl->uid = g_clientcount++;
 	cl->fd  = fd;
-	cl->inlen  = 0;
-	cl->outlen = 0;
-	cl->inqueue  = malloc(1);
-	cl->outqueue = malloc(1);
+	cl->inqueue  = malloc(128) ?: throw(errno, "Inqueue malloc error");
+	cl->outqueue = malloc(128) ?: throw(errno, "Outqueue malloc error");
+	cl->inqueue[0]  = '\0';
+	cl->outqueue[0] = '\0';
 	return cl;
 }
 
 static void DeleteClient(t_client* cl){
 	close(cl->fd);
 	g_clients[cl->fd] = NULL;
-	free(cl->inqueue);
-	free(cl->outqueue);
+	if (cl->inqueue)
+		free(cl->inqueue);
+	if (cl->outqueue)
+		free(cl->outqueue);
 	free(cl);
 }
 
@@ -132,13 +132,13 @@ static void	Broadcast(const char* format, int senderuid, int msglen, const char*
 		throw(1, "sprintf output somehow exceeded the buffer.");
 	for (int fd=0; fd<FD_SETSIZE; fd++)
 	if (g_clients[fd] && senderuid != g_clients[fd]->uid)
-		buffcat(&g_clients[fd]->outqueue, &g_clients[fd]->outlen, sbuff, bufflen);
+		strpush(&g_clients[fd]->outqueue, sbuff);
 }
 
 static void	ReadClient(t_client* cl){
-	char buff[BUFFLEN] = { 0 };
+	char buff[BUFFLEN+1] = { '\0' };
 
-	size_t rcount = recv(cl->fd, buff, BUFFLEN, MSG_DONTWAIT);
+	ssize_t rcount = recv(cl->fd, buff, BUFFLEN, MSG_DONTWAIT);
 	if (rcount < 0)
 		throw(errno, "Recv error");
 	else if (rcount == 0){
@@ -146,26 +146,21 @@ static void	ReadClient(t_client* cl){
 		DeleteClient(cl);
 	}
 	else {
-		buffcat(&cl->inqueue, &cl->inlen, buff, rcount);
+		strpush(&cl->inqueue, buff);
 		size_t	msglen;
-		while ((msglen = 1+strnchr(cl->inqueue, cl->inlen, '\n'))){
+		while ((msglen = 1+strichr(cl->inqueue, '\n'))){
 			Broadcast("client %i: %.*s\n", cl->uid, msglen-1, cl->inqueue);
-			for (size_t i=rcount; i<cl->inlen; i++)
-				cl->inqueue[i-rcount] = cl->inqueue[i];
-			cl->inlen -= msglen;
+			strshift(cl->inqueue, msglen);
 		}
 	}
 }
 
 static void	WriteClient(t_client* cl){
-	size_t wcount = send(cl->fd, cl->outqueue, cl->outlen, MSG_DONTWAIT);
+	size_t wcount = send(cl->fd, cl->outqueue, strlen(cl->outqueue), MSG_DONTWAIT);
 	if (wcount < 0 && (errno != EAGAIN))
 		throw(errno, "Send error");
-	else if (wcount != 0){
-		for (size_t i=wcount; i<cl->outlen; i++)
-			cl->outqueue[i-wcount] = cl->outqueue[i];
-		cl->outlen -= wcount;
-	}
+	else if (wcount != 0)
+		strshift(cl->outqueue, wcount);
 }
 
 
@@ -198,7 +193,7 @@ static void	Fd_Init(fd_set* fd_read, fd_set* fd_write){
 	for (int fd=0; fd<FD_SETSIZE; fd++) 
 	if (g_clients[fd]) {
 		FD_SET(fd, fd_read);
-		if (g_clients[fd]->outlen)
+		if (g_clients[fd]->outqueue[0])
 			FD_SET(fd, fd_write);
 	}
 }
