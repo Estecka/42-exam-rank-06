@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/07/15 00:28:36 by abaur            ###   ########.fr       */
+/*   Updated: 2022/07/15 22:44:28 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -167,7 +167,7 @@ static void	WriteClient(t_client* cl){
 	size_t wcount = send(cl->fd, cl->outqueue, strlen(cl->outqueue), MSG_DONTWAIT);
 	if (wcount < 0 && (errno != EAGAIN))
 		throw(errno, "Send error");
-	else if (wcount != 0)
+	else if (0 < wcount)
 		strshift(cl->outqueue, wcount);
 }
 
@@ -187,9 +187,8 @@ static bool	SockInit(int port){
 	return 0 <= (g_sockfd = socket(AF_INET, SOCK_STREAM, 0))
 	    && 0 <= fcntl(g_sockfd, F_SETFL, O_NONBLOCK)
 	    && 0 == bind(g_sockfd, (struct sockaddr*)&addr, sizeof(addr))
-	    && 0 == listen(g_sockfd, 10)
+	    && 0 == listen(g_sockfd, 128)
 	    ;
-
 }
 
 static void	Fd_Init(fd_set* fd_read, fd_set* fd_write){
