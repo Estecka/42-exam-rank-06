@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/07/16 14:21:35 by abaur            ###   ########.fr       */
+/*   Updated: 2022/07/17 01:36:09 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -27,7 +27,6 @@ struct s_client {
 	int	fd;
 	int	uid;
 	bool	newline;
-	char*	outqueue;
 };
 typedef struct s_client	t_client;
 
@@ -66,21 +65,6 @@ static noreturn void*	throw(int errnum, const char* message){
 }
 
 /**
- * Concatenates two strings. The destination string is reallocated as needed.
- */
-static void	strpush(char** str, const char* push){
-	size_t	slen = strlen(*str);
-	size_t	plen = strlen(push);
-	*str = realloc(*str, slen+plen+1) ?: throw(errno, "Realloc error");
-	strcat(*str, push);
-}
-static void	strshift(char* str, size_t shift){
-	size_t	slen = strlen(str);
-	for (size_t i=shift; i<=slen; i++)
-		str[i-shift] = str[i];
-}
-
-/**
  * Returns the index of either the first ocurrence of c, or the null terminator.
  */
 static size_t	strichr(const char* str, char c){
@@ -103,24 +87,20 @@ static t_client*	NewClient(){
 	cl->uid = g_clientcount++;
 	cl->fd  = fd;
 	cl->newline = true;
-	cl->outqueue = malloc(128) ?: throw(errno, "Outqueue malloc error");
-	cl->outqueue[0] = '\0';
 	return cl;
 }
 
 static void DeleteClient(t_client* cl){
 	close(cl->fd);
 	g_clients[cl->fd] = NULL;
-	if (cl->outqueue)
-		free(cl->outqueue);
 	free(cl);
 }
 
-static void	BroadcastRaw(const char* str, int senderuid){
-	write(STDOUT_FILENO, str, strlen(str));
+static void	BroadcastRaw(const char* str, int senderuid, size_t len){
+	write(STDOUT_FILENO, str, len);
 	for (int fd=0; fd<FD_SETSIZE; fd++)
 	if (g_clients[fd] && senderuid != g_clients[fd]->uid)
-		strpush(&g_clients[fd]->outqueue, str);
+		send(fd, str, len, MSG_DONTWAIT);
 }
 /**
  * @param format	May contain an optional %i flag.
@@ -133,7 +113,7 @@ static void	BroadcastFormat(const char* format, int senderuid){
 		throw(errno, "Sprintf error");
 	if (sizeof(sbuff) <= (size_t)bufflen)
 		throw(1, "sprintf output somehow exceeded the buffer.");
-	BroadcastRaw(sbuff, senderuid);
+	BroadcastRaw(sbuff, senderuid, bufflen);
 }
 
 static void	ReadClient(t_client* cl){
@@ -153,22 +133,12 @@ static void	ReadClient(t_client* cl){
 		}
 		ssize_t msglen = strichr(msg, '\n');
 		if (msg[msglen] == '\n'){
-			msg[msglen] = '\0';
 			cl->newline = true;
-		}
-		BroadcastRaw(msg, cl->uid);
-		if (cl->newline)
-			BroadcastRaw("\n", cl->uid);
+			BroadcastRaw(msg, cl->uid, msglen+1);
+		} else
+			BroadcastRaw(msg, cl->uid, msglen);
 		msg += msglen + 1;
 	}
-}
-
-static void	WriteClient(t_client* cl){
-	size_t wcount = send(cl->fd, cl->outqueue, strlen(cl->outqueue), MSG_DONTWAIT);
-	if (wcount < 0 && (errno != EAGAIN))
-		throw(errno, "Send error");
-	else if (0 < wcount)
-		strshift(cl->outqueue, wcount);
 }
 
 
@@ -191,29 +161,24 @@ static bool	SockInit(int port){
 	    ;
 }
 
-static void	Fd_Init(fd_set* fd_read, fd_set* fd_write){
+static void	Fd_Init(fd_set* fd_read){
 	FD_ZERO(fd_read);
-	FD_ZERO(fd_write);
 
 	FD_SET(g_sockfd, fd_read);
 
 	for (int fd=0; fd<FD_SETSIZE; fd++) 
-	if (g_clients[fd]) {
+	if (g_clients[fd])
 		FD_SET(fd, fd_read);
-		if (g_clients[fd]->outqueue[0])
-			FD_SET(fd, fd_write);
-	}
 }
 
 static noreturn void	SelectLoop() {
 	fd_set	fd_read;
-	fd_set	fd_write;
 
 	while (true) 
 	{
-		Fd_Init(&fd_read, &fd_write);
+		Fd_Init(&fd_read);
 
-		int r = select(FD_SETSIZE, &fd_read, &fd_write, NULL, NULL);
+		int r = select(FD_SETSIZE, &fd_read, NULL, NULL, NULL);
 		if (r < 0)
 			throw (errno, "Select error");
 		else if (r == 0)
@@ -225,8 +190,6 @@ static noreturn void	SelectLoop() {
 		}
 		for (int fd=0; fd<FD_SETSIZE; fd++)
 		if (g_clients[fd]) {
-			if (FD_ISSET(fd, &fd_write))
-				WriteClient(g_clients[fd]);
 			if (FD_ISSET(fd, &fd_read))
 				ReadClient(g_clients[fd]);
 		}
