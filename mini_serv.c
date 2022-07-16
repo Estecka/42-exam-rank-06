@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/07/15 22:44:28 by abaur            ###   ########.fr       */
+/*   Updated: 2022/07/16 14:21:35 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -60,7 +60,7 @@ static noreturn void	clean_exit(int status){
 }
 static noreturn void*	throw(int errnum, const char* message){
 	write(STDERR_FILENO, "Fatal error\n", 12);
-	if (message) write(STDERR_FILENO, message, strlen(message));
+	if (message) dprintf(STDERR_FILENO, "%s\n", message);
 	if (errnum)  dprintf(STDERR_FILENO, "%d %s\n", errnum, strerror(errnum));
 	clean_exit(1);
 }
