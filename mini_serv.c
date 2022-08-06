@@ -6,7 +6,7 @@
 /*   By: abaur <abaur@student.42.fr>                +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/06/28 18:17:53 by abaur             #+#    #+#             */
-/*   Updated: 2022/07/17 01:36:09 by abaur            ###   ########.fr       */
+/*   Updated: 2022/08/06 14:42:20 by abaur            ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -204,7 +204,9 @@ extern int	main(int argc, char** argv) {
 
 	if (!SockInit(atoi(argv[1])))
 		throw(errno, "Unable to create or bind socket.");
-	printf("Server open on port %s\n", argv[1]);
+	write(STDOUT_FILENO, "Server open on port ", 20);
+	write(STDOUT_FILENO, argv[1], strlen(argv[1]));
+	write(STDOUT_FILENO, "\n", 1);
 
 	SelectLoop();
 }
