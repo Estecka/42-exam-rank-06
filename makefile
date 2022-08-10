@@ -10,7 +10,7 @@ NAME = miniserv
 CFLAGS = -g -Wall -Wextra #-Werror
 
 
-all: client example ${NAME} 
+all: client example snail ${NAME} 
 
 ${NAME}: ${SRCS} ${HDRS}
 	gcc   ${SRCS} -o ${NAME} ${CFGLAGS}
@@ -21,6 +21,9 @@ client: client.c
 
 example: mini_serv_example.c
 	gcc ${CFLAGS} mini_serv_example.c -o example
+
+snail: snail.c
+	gcc ${CFLAGS} snail.c -o snail
 
 clean:
 	rm -f *.o
