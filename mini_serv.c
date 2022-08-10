@@ -39,7 +39,7 @@ int	g_clientcount = 0;
 /**
  * A map that takes a client's fd as key.
  */
-t_client*	g_clients[FD_SETSIZE] = { NULL };
+t_client	g_clients[FD_SETSIZE];
 
 
 
@@ -48,13 +48,14 @@ t_client*	g_clients[FD_SETSIZE] = { NULL };
 /******************************************************************************/
 
 static void	DeleteClient(t_client*);
+static bool	IsClient(int fd);
 
 static noreturn void	clean_exit(int status){
 	if (g_sockfd != -1)
 		close(g_sockfd);
 	for (int fd=0; fd<FD_SETSIZE; fd++)
-	if (g_clients[fd]) 
-		DeleteClient(g_clients[fd]);
+	if (IsClient(fd))
+		DeleteClient(&g_clients[fd]);
 	exit(status);
 }
 static noreturn void*	throw(int errnum, const char* message){
@@ -77,33 +78,34 @@ static size_t	strichr(const char* str, char c){
 /* # Clients Methods                                                          */
 /******************************************************************************/
 
+static bool	IsClient(int fd){
+	return (g_clients[fd].uid >= 0);
+}
+
 static t_client*	NewClient(){
 	int fd = accept(g_sockfd, NULL, NULL);
 	if (fd < 0)
 		throw(errno, "Accept error");
 
-	t_client* cl = malloc(sizeof(t_client)) ?: (close(fd), throw(errno, "Client Malloc error"));
-	g_clients[fd] = cl;
-	cl->uid = g_clientcount++;
-	cl->fd  = fd;
-	cl->newline = true;
-	return cl;
+	g_clients[fd].uid = g_clientcount++;
+	g_clients[fd].fd  = fd;
+	g_clients[fd].newline = true;
+	return &g_clients[fd];
 }
 
 static void DeleteClient(t_client* cl){
 	close(cl->fd);
-	g_clients[cl->fd] = NULL;
-	free(cl);
+	memset(cl, -1, sizeof(t_client));
 }
 
 static void	BroadcastRaw(const char* str, int senderuid, size_t len){
 	write(STDOUT_FILENO, str, len);
 	for (int fd=0; fd<FD_SETSIZE; fd++)
-	if (g_clients[fd] && senderuid != g_clients[fd]->uid)
+	if (IsClient(fd) && senderuid != g_clients[fd].uid)
 		send(fd, str, len, MSG_DONTWAIT);
 }
 /**
- * @param format	May contain an optional %i flag.
+ * @param format	Should contain a %i flag.
  */
 static void	BroadcastFormat(const char* format, int senderuid){
 	char	sbuff[strlen(format) + 16];
@@ -155,7 +157,7 @@ static bool	SockInit(int port){
 	addr.sin_port        = htons(port);
 
 	return 0 <= (g_sockfd = socket(AF_INET, SOCK_STREAM, 0))
-	    && 0 <= fcntl(g_sockfd, F_SETFL, O_NONBLOCK)
+	    // && 0 <= fcntl(g_sockfd, F_SETFL, O_NONBLOCK)
 	    && 0 == bind(g_sockfd, (struct sockaddr*)&addr, sizeof(addr))
 	    && 0 == listen(g_sockfd, 128)
 	    ;
@@ -167,7 +169,7 @@ static void	Fd_Init(fd_set* fd_read){
 	FD_SET(g_sockfd, fd_read);
 
 	for (int fd=0; fd<FD_SETSIZE; fd++) 
-	if (g_clients[fd])
+	if (IsClient(fd))
 		FD_SET(fd, fd_read);
 }
 
@@ -189,9 +191,9 @@ static noreturn void	SelectLoop() {
 			BroadcastFormat("server: client %i just arrived\n", uid);
 		}
 		for (int fd=0; fd<FD_SETSIZE; fd++)
-		if (g_clients[fd]) {
+		if (IsClient(fd)) {
 			if (FD_ISSET(fd, &fd_read))
-				ReadClient(g_clients[fd]);
+				ReadClient(&g_clients[fd]);
 		}
 	}
 }
@@ -208,5 +210,6 @@ extern int	main(int argc, char** argv) {
 	write(STDOUT_FILENO, argv[1], strlen(argv[1]));
 	write(STDOUT_FILENO, "\n", 1);
 
+	memset(g_clients, -1, sizeof(g_clients));
 	SelectLoop();
 }
